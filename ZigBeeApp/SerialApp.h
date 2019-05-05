@@ -71,6 +71,9 @@ extern "C"
 
 #define SERIALAPP_SEND_EVT           0x0001
 #define SERIALAPP_RESP_EVT           0x0002
+/*add by yang*/
+#define SERIALAPP_REPORT_ADDR        0x0004
+#define SERIALAPP_CLEAR_ADDRMAP      0x0008
 
 // OTA Flow Control Delays
 #define SERIALAPP_ACK_DELAY          1

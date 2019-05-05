@@ -20,6 +20,9 @@
 #include "hal_led.h"
 #include "hal_uart.h"
 
+#include <ioCC2530.h>
+#define MYLED P2_0
+
 /*********************************************************************
  * MACROS
  */
@@ -68,7 +71,7 @@
 #define SERIAL_APP_RSP_CNT  4
 
 /*定义设备序号，用于与地址对应，每个终端不同，下载前修改*/
-#define  DevNum  1//这个根据不同的终端在下载时进行改动<----------------------------------------------------------------------
+#define  DevNum  3//这个根据不同的终端在下载时进行改动<----------------------------------------------------------------------
 
 // This list should be filled with Application specific Cluster IDs.
 const cId_t SerialApp_ClusterList[SERIALAPP_MAX_CLUSTERS] =
@@ -138,8 +141,14 @@ static uint8 SerialApp_RspBuf[SERIAL_APP_RSP_CNT];
 电器名字的映射，编号就是这个数组的下标，编号
 也是在终端发给协调者中的数据包中标识了
 */
-static uint16 AddrMap[16] = {0};
+
+#define AMSize 16
+static uint16 AddrMap[AMSize] = {0};
 static uint8 led3_state = 0;
+
+//协调者发送失败的时候重试的次数
+static int retry = 3;
+static int curTryNum = 0;
 
 /*********************************************************************
  * LOCAL FUNCTIONS
@@ -245,8 +254,14 @@ UINT16 SerialApp_ProcessEvent( uint8 task_id, UINT16 events )
             // Start sending the periodic message in a regular interval.
            // HalLedSet(HAL_LED_1, HAL_LED_MODE_ON);
             //终端联网成功后，发送自己的短地址
-            if(SampleApp_NwkState != DEV_ZB_COORD)
-              SerialApp_DeviceConnect();              
+          if(SampleApp_NwkState != DEV_ZB_COORD){
+              SerialApp_DeviceConnect();
+              osal_start_timerEx(task_id, SERIALAPP_REPORT_ADDR, 100);   
+          }else {
+              //clear AddrMap
+              memset(AddrMap, '\0', AMSize);
+              osal_start_timerEx(task_id, SERIALAPP_CLEAR_ADDRMAP, 5000);
+            }
         }
         else
         {
@@ -278,6 +293,17 @@ UINT16 SerialApp_ProcessEvent( uint8 task_id, UINT16 events )
     SerialApp_Resp();//
     return ( events ^ SERIALAPP_RESP_EVT );
   }
+  
+  //周期性的上报地址
+  if (events & SERIALAPP_REPORT_ADDR){
+      SerialApp_DeviceConnect();
+      osal_start_timerEx(task_id, SERIALAPP_REPORT_ADDR, 1000);
+  }
+  
+  if (events & SERIALAPP_CLEAR_ADDRMAP){
+      memset(AddrMap, '\0', AMSize);
+      osal_start_timerEx(task_id, SERIALAPP_CLEAR_ADDRMAP, 5000);     
+  }
 
   return ( 0 );  // Discard unknown events.
 }
@@ -299,6 +325,7 @@ void SerialApp_ProcessMSGCmd( afIncomingMSGPacket_t *pkt )
   uint8 stat;
   uint8 seqnb;
   uint8 delay;
+  uint8 target;
 
   switch ( pkt->clusterId )
   {
@@ -334,22 +361,27 @@ void SerialApp_ProcessMSGCmd( afIncomingMSGPacket_t *pkt )
         //序列号不正确
         stat = OTA_DUP_MSG;
     }
-*/
+*/    
+    stat = pkt->cmd.Data[2] - '0';
+    target = pkt->cmd.Data[1] - '0';
     //关闭LED2
     if (pkt->cmd.Data[2] == '1'){
       stat = 1;
       HalLedSet(HAL_LED_2, HAL_LED_MODE_ON);
+      //接负极，所以0为开，另一端接电源
+      MYLED = 0;
     }
     else if (pkt->cmd.Data[2] == '0'){
       stat = 0;
       HalLedSet(HAL_LED_2, HAL_LED_MODE_OFF);
+      MYLED = 1;
     }
     
     // Select approproiate OTA flow-control delay.
     //delay = (stat == OTA_SER_BUSY) ? SERIALAPP_NAK_DELAY : SERIALAPP_ACK_DELAY;
 
     // Build & send OTA response message.
-    SerialApp_RspBuf[0] = DevNum;
+    SerialApp_RspBuf[0] = target;
     SerialApp_RspBuf[1] = stat;
     //SerialApp_RspBuf[2] = LO_UINT16( delay );
     //SerialApp_RspBuf[3] = HI_UINT16( delay );
@@ -365,7 +397,7 @@ void SerialApp_ProcessMSGCmd( afIncomingMSGPacket_t *pkt )
     UartRespBuf[1] = pkt->cmd.Data[1] + '0'; //终端状态，字符串形式
     HalUARTWrite(SERIAL_APP_PORT, UartRespBuf, 2);
     SerialApp_TxLen = 0;
-    osal_start_timerEx( SerialApp_TaskID, SERIALAPP_SEND_EVT, 500);
+    osal_start_timerEx( SerialApp_TaskID, SERIALAPP_SEND_EVT, 100);
     
     //osal_set_event(SerialApp_TaskID, SERIALAPP_SEND_EVT);
     break;
@@ -410,7 +442,16 @@ static void SerialApp_Send(void)
       }
       else
       {
-        osal_set_event(SerialApp_TaskID, SERIALAPP_SEND_EVT);
+         //osal_set_event(SerialApp_TaskID, SERIALAPP_SEND_EVT); 
+#if 0
+          if (curTryNum < retry){
+            curTryNum ++;
+            osal_set_event(SerialApp_TaskID, SERIALAPP_SEND_EVT); 
+          }
+          else {
+            curTryNum = 0;
+          }
+#endif
       }
     }
 #else
@@ -428,24 +469,19 @@ static void SerialApp_Send(void)
     uint16 endDevice_Addr;
     target = SerialApp_TxBuf[1] - '0'; //从串口收到的数据，串口数据第二个字节是终端序号，对应短地址，第三个字节是控制信息，目前，0表示关闭，1表示打开
     endDevice_Addr = AddrMap[target];
-#if 0   /*有了这一段会导致运行失败，详细见20190406.txt*/
+    //每个存储的地址只用一次，用完清零等待终端下一次上报地址
+    AddrMap[target] = 0;
+  /*有了这一段会导致运行失败，详细见20190406.txt*/
     if(endDevice_Addr == 0){/*如果为0说明这个序号没有对应终端*/
-      if (led3_state == 0){
-        HalLedSet(HAL_LED_3, HAL_LED_MODE_ON);
-        led3_state = 1;
-      }
-      else{
-        HalLedSet(HAL_LED_3, HAL_LED_MODE_OFF);
-        led3_state = 0;
-      }
-      
-    } else {
-#endif
+      SerialApp_TxBuf[1] = target + '0';
+      SerialApp_TxBuf[2] = 'N';         
+    }
       //点播传送
       SerialApp_TxAddr.addrMode = (afAddrMode_t)Addr16Bit;
       SerialApp_TxAddr.endPoint = SERIALAPP_ENDPOINT;
       SerialApp_TxAddr.addr.shortAddr = endDevice_Addr;
   
+      HalLedSet(HAL_LED_2, HAL_LED_MODE_ON);
       if (SerialApp_TxLen)
       {
         if (afStatus_SUCCESS != AF_DataRequest(&SerialApp_TxAddr,
@@ -454,7 +490,18 @@ static void SerialApp_Send(void)
                                                 SerialApp_TxLen+1, SerialApp_TxBuf,
                                                 &SerialApp_MsgID, 0, AF_DEFAULT_RADIUS))
         {
-          osal_set_event(SerialApp_TaskID, SERIALAPP_SEND_EVT);
+          HalLedSet(HAL_LED_2, HAL_LED_MODE_OFF);
+          osal_set_event(SerialApp_TaskID, SERIALAPP_SEND_EVT); 
+#if 0       
+          if (curTryNum < retry){
+            curTryNum ++;
+            osal_set_event(SerialApp_TaskID, SERIALAPP_SEND_EVT); 
+          }
+          else {
+            curTryNum = 0;
+          }
+#endif         
+          
         }
       }
     //}
@@ -560,8 +607,8 @@ void SerialApp_DeviceConnectRsp(uint8 *buf)
   //SerialApp_TxAddr.endPoint = SERIALAPP_ENDPOINT;
   //SerialApp_TxAddr.addr.shortAddr = BUILD_UINT16(buf[1], buf[0]);
  
-if (buf[0] == 'O' && buf[1] == 'K')//终端接受到协调者的"OK"信息，点亮LED2  
-    HalLedSet(HAL_LED_2, HAL_LED_MODE_ON);
+//if (buf[0] == 'O' && buf[1] == 'K')//终端接受到协调者的"OK"信息，点亮LED2  
+    //HalLedSet(HAL_LED_2, HAL_LED_MODE_ON);
   //HalUARTWrite ( 0, "< connect success>\n", 23);
 #endif
 }
