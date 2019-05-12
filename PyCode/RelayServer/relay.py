@@ -12,10 +12,7 @@ from flask import request
 from long_connection_proxy import HeartBeatServer
 from account_utils import VerifyAcct
 from account_db_proxy import DBProxy
-
-
-feedback = {}
-cv = Condition()
+from global_variables import GlobalVal
 
 
 host = ("0.0.0.0", 12580)
@@ -58,8 +55,8 @@ def Register():
     
     reqDic = json.loads(reqData)
 
-    piName = reqDic.get(piName, None)
-    md5Pwd = reqDic.get(pwd, None)
+    piName = reqDic.get("piName", None)
+    md5Pwd = reqDic.get("pwd", None)
 
     if not piName or not md5Pwd:
         return json.dumps({"ret": -4, "msg": "register bad format"})
@@ -79,12 +76,10 @@ def Feedback():
     if request.method != "POST":
         return json.dumps({"ret":-1, "msg":"Post method only"})
 
-    cv.acquire()
     feedback = json.loads(request.data.decode("utf-8"))
+    GlobalVal.SetFeedBack(feedback)
     print "feedback: ", feedback 
     #wake up one thread a time
-    cv.notify()
-    cv.release()
 
     return ok
 
@@ -110,19 +105,16 @@ def SendSignal():
 
     print "\nRecv: ", cmdDic
 
-    cmdDic = cmdDic["cmd"]
+    cmdDic = cmdDic.get("cmd", None)
+    if cmdDic == None:
+        cmdDic = {"cmd": "check"}
+
     pushProxy.Push(cmdDic)
 
     #feedback global variable lock
-    cv.acquire()
-    if len(feedback) == 0:
-        cv.wait()
+    retDic = GlobalVal.GetFeedBack()
 
     print "Send feedback to mobile"
-
-    retDic = copy.deepcopy(feedback)
-    feedback = {}
-    cv.release()
 
     return json.dumps(retDic)
 

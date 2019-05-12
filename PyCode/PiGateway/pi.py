@@ -66,7 +66,8 @@ class HeartBeatClient(object):
         response = {}
         response["ret"] = ret
         response["msg"] = msg
-        response["cnt"] = cnt
+        if isinstance(msg, dict):
+            msg["cnt"] = cnt
 
         return response
 
@@ -137,11 +138,14 @@ class HeartBeatClient(object):
             #lock.acquire()
 
             cmdDic = json.loads(resp)
+            if cmdDic.get("cmd", None) != "check":
+                self.usbProxy.Send2USB(cmdDic)
+                self.cnt += 1
+                status = self.usbProxy.GetStatus()
+            
+            else:
+                status = self.usbProxy.GetLastStatus()
 
-            self.usbProxy.Send2USB(cmdDic)
-
-            self.cnt += 1
-            status = self.usbProxy.GetStatus()
             response = self.PrepareResp(0, status, self.cnt)
             
             respJson = json.dumps(response)
@@ -154,11 +158,12 @@ class HeartBeatClient(object):
                 print("feedback fail")
 
 
+    
     def Run(self):
         #heart beat frequency
-        period = 60
+        period = 120
 
-        keepAlive = Thread(target=self.KeepAlive, args=(puriod, ))
+        keepAlive = Thread(target=self.KeepAlive, args=(period, ))
         keepAlive.setDaemon(1)
         keepAlive.start()
 

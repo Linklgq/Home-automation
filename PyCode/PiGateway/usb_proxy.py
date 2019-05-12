@@ -13,16 +13,18 @@ else:
 class USBProxy(Thread):
     
     targetMap = {"red": "1", "green": "2", "blue": "3"}
-    statMap = {"on": "1", "off": "0"}
+    statMap = {"on": "1", "off": "0", "offline": "0"}
     rtargetMap = {"1": "red", "2": "green", "3": "blue"}
-    rstatMap = {"1": "online", "0": "online", "N": "offline"}
+    rstatMap = {"1": "on", "0": "off", "N": "offline"}
 
     def __init__(self, dev = None, baudrate=115200, timeout=1):
         self.dev = dev
         self.serProxy = None
-        self.endDeviceStatusList = []
+        self.endDeviceStatusList = ["10", "20", "30"]
         
         self.cmdQue = Queue(32)
+        self.statusQue = Queue(32)   
+        self.lastStatus = {}
 
         if dev:
             self.serProxy = serial.Serial(dev, baudrate, timeout = timeout)
@@ -149,14 +151,22 @@ class USBProxy(Thread):
             print "Pi to ZigBee costs %ds"%(time.time() - start)
             
             self.endDeviceStatusList = copy.deepcopy(retList)
+            statusDic = self._CmdLst2Dic(retList)
+
+            self.statusQue.put(statusDic)
 
 
     def GetStatus(self):
-        statusDic = self._CmdLst2Dic(self.endDeviceStatusList)
+        #statusDic = self._CmdLst2Dic(self.endDeviceStatusList)
+        
+        statusDic = self.statusQue.get()
+        self.lastStatus = statusDic 
 
         return statusDic
 
-
+    def GetLastStatus(self):
+        return self.lastStatus
+ 
 if __name__ == "__main__":
     proxy = USBProxy("/dev/ttyUSB0", 115200, 1)
     data = "11"

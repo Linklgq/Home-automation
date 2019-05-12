@@ -1,13 +1,13 @@
 #-*-coding: utf-8-*-
 
 import hashlib
-from account_db_proxy import DBProxy
-
-dbName = "account.db"
-tableName = "account"
-dbProxy = DBProxy(dbName)
-
-
+#from account_db_proxy import DBProxy
+#
+#dbName = "account.db"
+#tableName = "account"
+#dbProxy = DBProxy(dbName)
+#
+#
 def Encrypt2MD5(string):
     salt = "yjf"
 
@@ -18,10 +18,10 @@ def Encrypt2MD5(string):
     return md.hexdigest()
 
 
-def VerifyAcct(piName, md5Pwd):
-    realPwd = dbProxy.Retrieve(piName)
-
-    if md5Pwd == realPwd:
-        return True
-
-    return False
+#def VerifyAcct(piName, md5Pwd):
+#    realPwd = dbProxy.Retrieve(piName)
+#
+#    if md5Pwd == realPwd:
+#        return True
+#
+#    return False
