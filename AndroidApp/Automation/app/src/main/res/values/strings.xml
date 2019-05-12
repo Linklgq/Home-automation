@@ -1,0 +1,12 @@
+<resources>
+    <string name="app_name">Automation</string>
+    <string name="pi_name">树莓派</string>
+    <string name="pwd">密码</string>
+    <string name="login">登录</string>
+    <string name="hint_pi_name_empty">树莓派名称不能为空</string>
+    <string name="hint_pwd_empty">密码不能为空</string>
+    <string name="error_network">网络连接异常</string>
+    <string name="send_signal">send</string>
+    <string name="check_status">check</string>
+    <string name="login_success">登录成功</string>
+</resources>
